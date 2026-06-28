@@ -131,7 +131,7 @@ MERG_SAMPLE_PAGE_CAP = 20
 
 # لیست موضوع‌ها از این آدرس raw گیت‌هاب خوانده می‌شود (بدون نیاز به اعتبارنامه).
 # کاربر/توسعه‌دهنده فقط همین فایل را در ریپو آپدیت می‌کند (یا با GitHub Action از شیت).
-SUBJECTS_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/subjects.json"
+SUBJECTS_URL = "https://raw.githubusercontent.com/yasin81ab-max/pdf-extractor/refs/heads/main/subjects.json"
 SUBJECTS_FETCH_TIMEOUT = 8
 
 # تنظیمات توضیح‌گذاری تصاویر (vision)
