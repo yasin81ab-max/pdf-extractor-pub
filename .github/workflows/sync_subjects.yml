@@ -39,9 +39,9 @@ jobs:
       - name: Build subjects.json
         env:
           SHEET_ID: ${{ secrets.SHEET_ID }}
-          WORKSHEET: "Sheet1"
-          SUBJECT_COLUMN: "A"
-          SKIP_HEADER: "1"
+          WORKSHEET: "Auto_Export_Mother_Cluster"
+          SUBJECT_COLUMN: "D"
+          SKIP_HEADER: "2"
         run: python sync_subjects.py
 
       - name: Cleanup credentials
