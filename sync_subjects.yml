@@ -1,0 +1,57 @@
+# این فایل را در ریپوی پابلیک خود قرار دهید: .github/workflows/sync_subjects.yml
+#
+# پیش‌نیازها (یک‌بار تنظیم در Settings → Secrets and variables → Actions):
+#   Secrets:
+#     GCP_SA_JSON_B64  →  خروجی base64 از فایل JSON سرویس‌اکانت گوگل
+#                         (در ترمینال:  base64 -w0 service-account.json   یا روی ویندوز:
+#                          certutil -encode service-account.json out.b64 )
+#     SHEET_ID         →  شناسه‌ی Google Sheet
+#   نکته مهم: شیت را با ایمیلِ سرویس‌اکانت (client_email داخل JSON) به‌صورت Viewer share کنید.
+#
+# این Action فقط داخل گیت‌هاب اعتبارنامه را می‌بیند؛ اپِ توزیع‌شده هرگز آن را نمی‌بیند.
+
+name: Sync subjects from Google Sheet
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # هر ۶ ساعت یک‌بار
+  workflow_dispatch: {}      # امکان اجرای دستی از تب Actions
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install gspread google-auth
+
+      - name: Write service-account file (from base64 secret)
+        run: echo "${{ secrets.GCP_SA_JSON_B64 }}" | base64 -d > sa.json
+
+      - name: Build subjects.json
+        env:
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          WORKSHEET: "Sheet1"
+          SUBJECT_COLUMN: "A"
+          SKIP_HEADER: "1"
+        run: python sync_subjects.py
+
+      - name: Cleanup credentials
+        if: always()
+        run: rm -f sa.json
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add subjects.json
+          git diff --staged --quiet || git commit -m "chore: update subjects.json"
+          git push

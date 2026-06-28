@@ -1,0 +1,10 @@
+/build
+/dist
+*.ico
+*.json
+*.log
+*.spec
+*.db
+pdf_extractor_final (1).py
+pdf_extractor_final.py
+pdf_extractor_final1.py
