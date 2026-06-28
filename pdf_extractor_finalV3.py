@@ -131,7 +131,7 @@ MERG_SAMPLE_PAGE_CAP = 20
 
 # لیست موضوع‌ها از این آدرس raw گیت‌هاب خوانده می‌شود (بدون نیاز به اعتبارنامه).
 # کاربر/توسعه‌دهنده فقط همین فایل را در ریپو آپدیت می‌کند (یا با GitHub Action از شیت).
-SUBJECTS_URL = "https://raw.githubusercontent.com/yasin81ab-max/pdf-extractor/refs/heads/main/subjects.json"
+SUBJECTS_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/subjects.json"
 SUBJECTS_FETCH_TIMEOUT = 8
 
 # تنظیمات توضیح‌گذاری تصاویر (vision)
@@ -144,6 +144,19 @@ IMAGE_TYPES = ["نمودار", "عکس کالا", "جدول", "اطلاعات ت
 # │  تنظیمات توسعه‌دهنده — فقط قبل از build تغییر دهید               │
 # │  کاربر نهایی این بخش را نمی‌بیند و نیازی به دستکاری ندارد        │
 # └─────────────────────────────────────────────────────────────────────┘
+
+# ── نسخه‌ی فعلی اپ ──
+APP_VERSION = "1.0.0"   # ← هر بار که build جدید می‌گیری این رو افزایش بده
+
+# ── سیستم آپدیت خودکار ──
+# True  = اپ هر بار start می‌کنه چک می‌کنه و اگه نسخه‌ی جدید بود دانلود+restart می‌کنه
+# False = آپدیت خودکار کاملاً غیرفعال (کاربر هیچ‌چیز نمی‌بیند)
+AUTO_UPDATE_ENABLED = True
+
+# آدرس فایل version.json در ریپوی پابلیک گیت‌هاب
+# این فایل را بعد از هر release آپدیت کن (یا با GitHub Action خودکار کن)
+UPDATE_VERSION_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/version.json"
+UPDATE_CHECK_TIMEOUT = 6   # ثانیه
 
 # نام فولدر کلی در Google Drive (زیر آن موضوع و تاریخ اجرا ساخته می‌شود)
 DRIVE_ROOT_FOLDER_NAME = "CatalogExtractor"
@@ -181,6 +194,111 @@ def save_config(config_path: Path, cfg: Dict[str, Any]) -> None:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logging.debug(f"Could not save config: {e}")
+
+
+# ======================== AUTO UPDATE ========================
+
+def _version_tuple(v: str) -> tuple:
+    """'1.2.3' → (1, 2, 3)"""
+    try:
+        return tuple(int(x) for x in str(v).strip().split("."))
+    except Exception:
+        return (0,)
+
+
+def check_for_update() -> Optional[Dict[str, Any]]:
+    """
+    فایل version.json را از گیت‌هاب می‌خواند.
+    اگه نسخه‌ی جدیدتر بود → dict با کلیدهای version و download_url برمی‌گرداند.
+    وگرنه → None
+    فرمت version.json:
+      { "version": "1.2.0", "download_url": "https://github.com/.../releases/download/v1.2.0/app.exe" }
+    """
+    if not AUTO_UPDATE_ENABLED:
+        return None
+    try:
+        r = requests.get(UPDATE_VERSION_URL, timeout=UPDATE_CHECK_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+        remote_ver = data.get("version", "0.0.0")
+        if _version_tuple(remote_ver) > _version_tuple(APP_VERSION):
+            return data
+    except Exception as e:
+        logging.debug(f"update check failed: {e}")
+    return None
+
+
+def download_and_restart(update_info: Dict[str, Any], log_fn: Callable[[str], None]) -> None:
+    """
+    فایل exe جدید را دانلود می‌کند، جای فایل فعلی را می‌گیرد و برنامه را restart می‌کند.
+    این تابع در thread پس‌زمینه اجرا می‌شود.
+    """
+    import urllib.request
+    import shutil
+
+    url = update_info.get("download_url", "")
+    new_ver = update_info.get("version", "؟")
+    if not url:
+        log_fn("⚠ لینک دانلود در version.json تعریف نشده.")
+        return
+
+    try:
+        # مسیر exe فعلی (هم PyInstaller هم اجرای مستقیم .py)
+        if getattr(sys, "frozen", False):
+            current_exe = Path(sys.executable)
+        else:
+            current_exe = Path(sys.argv[0]).resolve()
+
+        tmp_path = current_exe.with_suffix(".new.exe")
+        log_fn(f"⬇ دانلود نسخه‌ی {new_ver} ...")
+
+        with urllib.request.urlopen(url, timeout=120) as resp, open(tmp_path, "wb") as out:
+            total = int(resp.headers.get("Content-Length", 0))
+            downloaded = 0
+            chunk = 65536
+            while True:
+                buf = resp.read(chunk)
+                if not buf:
+                    break
+                out.write(buf)
+                downloaded += len(buf)
+                if total:
+                    pct = int(downloaded * 100 / total)
+                    log_fn(f"  دانلود: {pct}%")
+
+        log_fn("✅ دانلود کامل شد — در حال راه‌اندازی مجدد ...")
+
+        # یه bat کوچیک می‌سازیم که:
+        # ۱) چند ثانیه صبر می‌کنه تا اپ فعلی بسته بشه
+        # ۲) فایل قدیمی رو با جدید جایگزین می‌کنه
+        # ۳) اپ جدید رو اجرا می‌کنه
+        bat_path = current_exe.parent / "_update.bat"
+        bat_content = (
+            "@echo off\n"
+            "timeout /t 2 /nobreak >nul\n"
+            f'move /y "{tmp_path}" "{current_exe}"\n'
+            f'start "" "{current_exe}"\n'
+            f'del "%~f0"\n'   # خودِ bat رو هم پاک می‌کنه
+        )
+        bat_path.write_text(bat_content, encoding="ascii")
+
+        import subprocess
+        subprocess.Popen(
+            ["cmd.exe", "/c", str(bat_path)],
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            close_fds=True,
+        )
+        # اپ فعلی رو می‌بندیم
+        import os
+        os.kill(os.getpid(), 9)
+
+    except Exception as e:
+        log_fn(f"⚠ آپدیت ناموفق: {str(e)[:80]}")
+        # فایل ناقص رو پاک کن
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 # ======================== GOOGLE DRIVE ========================
@@ -1839,6 +1957,23 @@ def launch_ui(app_dir: Path) -> None:
     banner = tk.Canvas(main_frame, height=76, highlightthickness=0, bd=0)
     banner.pack(fill="x")
 
+    # لیبل نسخه — گوشه‌ی بالا-چپ، کمرنگ و کوچک
+    version_label = tk.Label(
+        main_frame, text=f"v{APP_VERSION}",
+        bg=C_ROOT, fg="#2a5a62",
+        font=("Arial", 7), anchor="w",
+    )
+    version_label.place(x=6, y=4)
+
+    # لیبل وضعیت آپدیت (پیش‌فرض خالی، بعد از چک پر می‌شه)
+    update_label_var = tk.StringVar(value="")
+    update_label = tk.Label(
+        main_frame, textvariable=update_label_var,
+        bg=C_ROOT, fg="#e8a838",
+        font=("Arial", 7), anchor="w", cursor="hand2",
+    )
+    update_label.place(x=6, y=16)
+
     def _redraw_banner(event=None, _c=banner):
         _grad_v(_c, "#011218", "#0a6b77", steps=55)
         w = _c.winfo_width() or 700
@@ -2186,6 +2321,33 @@ def launch_ui(app_dir: Path) -> None:
         logging.debug(f"subjects init failed: {_e}")
         _populate_subjects([])
     switch_top("main")
+
+    # ── چک آپدیت در پس‌زمینه (بلافاصله بعد از باز شدن پنجره) ──
+    def _run_update_check():
+        if not AUTO_UPDATE_ENABLED:
+            return
+        try:
+            info = check_for_update()
+        except Exception:
+            return
+        if info is None:
+            return
+
+        new_ver = info.get("version", "؟")
+
+        def _show_update_prompt():
+            update_label_var.set(f"⬆ نسخه‌ی {new_ver} موجود است — در حال دانلود...")
+            from threading import Thread as _T
+            _T(target=_do_download, daemon=True).start()
+
+        def _do_download():
+            def _log(m):
+                root.after(0, lambda msg=m: update_label_var.set(msg))
+            download_and_restart(info, _log)
+
+        root.after(0, _show_update_prompt)
+
+    Thread(target=_run_update_check, daemon=True).start()
 
     def apply_features_to_manual(features: List[str]):
         def _u():
