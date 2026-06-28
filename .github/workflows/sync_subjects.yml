@@ -34,7 +34,9 @@ jobs:
         run: pip install gspread google-auth
 
       - name: Write service-account file (from base64 secret)
-        run: echo "${{ secrets.GCP_SA_JSON_B64 }}" | base64 -d > sa.json
+        run: python3 -c "import base64,os; open('sa.json','wb').write(base64.b64decode(os.environ['SA_B64']))"
+        env:
+          SA_B64: ${{ secrets.GCP_SA_JSON_B64 }}
 
       - name: Build subjects.json
         env:
